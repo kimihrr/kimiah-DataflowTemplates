@@ -17,11 +17,11 @@ package com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub;
 
 import com.google.api.services.bigquery.model.TableRow;
 import com.google.cloud.teleport.v2.cdc.dlq.DeadLetterQueueSanitizer;
-import com.google.cloud.teleport.v2.templates.bigtablechangestreamstobigquery.model.TransientColumn;
+import com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub.model.TransientColumn;
 import org.apache.beam.sdk.io.gcp.bigquery.BigQueryInsertError;
 
 /**
- * Class {@link BigQueryDeadLetterQueueSanitizer} cleans and prepares failed BigQuery inserts to be
+ * Class {@link PubSubDeadLetterQueueSanitizer} cleans and prepares failed BigQuery inserts to be
  * stored in a GCS Dead Letter Queue. NOTE: The input to a Sanitizer is flexible but the output must
  * be a String unless your override formatMessage().
  */

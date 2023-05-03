@@ -22,6 +22,7 @@ import com.google.cloud.bigtable.data.v2.models.DeleteCells;
 import com.google.cloud.bigtable.data.v2.models.DeleteFamily;
 import com.google.cloud.bigtable.data.v2.models.Entry;
 import com.google.cloud.bigtable.data.v2.models.SetCell;
+import com.google.cloud.pubsublite.proto.PubSubMessage;
 import com.google.cloud.teleport.metadata.Template;
 import com.google.cloud.teleport.metadata.TemplateCategory;
 import com.google.cloud.teleport.v2.cdc.dlq.DeadLetterQueueManager;
@@ -143,10 +144,10 @@ public final class BigtableChangeStreamsToPubSub {
    * @return The result of the pipeline execution.
    */
   public static PipelineResult run(BigtableChangeStreamsToPubSubOptions options) {
+    LOG.info("Requested Message Format is " + options.getMessageFormat());
     setOptions(options);
     validateOptions(options);
 
-    String changelogTableName = getPubSubChangelogTableName(options);
     String bigtableProject = getBigtableProjectId(options);
 
     // Retrieve and parse the startTimestamp
@@ -157,6 +158,8 @@ public final class BigtableChangeStreamsToPubSub {
 
     // end timestamp might be supported later
     Timestamp endTimestamp = Timestamp.MAX_VALUE;
+    String pubSubTopicName = options.getPubSubTopic();
+    String pubSubAPI = options.getPubSubAPI();
 
     BigtableSource sourceInfo =
         new BigtableSource(
@@ -170,17 +173,10 @@ public final class BigtableChangeStreamsToPubSub {
 
     PubSubDestination destinationInfo =
         new PubSubDestination(
-            getPubSubProjectId(options),
-            options.getPubSubDataset(),
-            changelogTableName,
-            options.getWriteRowkeyAsBytes(),
-            options.getWriteValuesAsBytes(),
-            options.getWriteNumericTimestamps(),
-            options.getPubSubChangelogTablePartitionGranularity(),
-            options.getPubSubChangelogTablePartitionExpirationMs(),
-            options.getPubSubChangelogTableFieldsToIgnore());
+            options.getPubSubTopic(), options.getMessageFormat(), options.getMessageEncoding());
 
-    PubSubUtils PubSub = new PubSubUtils(sourceInfo, destinationInfo);
+    PubSubUtils pubSub = new PubSubUtils(
+        sourceInfo, destinationInfo, options.getPubSubAPI(), options.getMessageEncoding());
 
     /*
      * Stages: 1) Read {@link ChangeStreamMutation} from change stream. 2) Create {@link
@@ -189,6 +185,7 @@ public final class BigtableChangeStreamsToPubSub {
      * 4) Append {@link TableRow} to PubSub. 5) Write Failures from 2), 3) and
      * 4) to GCS dead letter queue.
      */
+    /** Step 1 */
     Pipeline pipeline = Pipeline.create(options);
     DeadLetterQueueManager dlqManager = buildDlqManager(options);
 
@@ -211,6 +208,7 @@ public final class BigtableChangeStreamsToPubSub {
           readChangeStream.withMetadataTableTableId(
               options.getBigtableChangeStreamsMetadataTableTableId());
     }
+    /** Step 2: just return the output for sending to pubSub and dlq*/
 
     PCollection<ChangeStreamMutation> dataChangeRecord =
         pipeline
@@ -246,28 +244,29 @@ public final class BigtableChangeStreamsToPubSub {
             .and(retryableDlqFailsafeModJson)
             .apply("Merge Source And DLQ Mod JSON", Flatten.pCollections());
 
-    FailsafeModJsonToChangelogTableRowTransformer.FailsafeModJsonToTableRowOptions
+    FailsafeModJsonToPubSubMessageTransformer.FailsafeModJsonToPubSubMessageOptions
         failsafeModJsonToTableRowOptions =
-        FailsafeModJsonToChangelogTableRowTransformer.FailsafeModJsonToTableRowOptions.builder()
+        FailsafeModJsonToPubSubMessageTransformer.FailsafeModJsonToPubSubMessageOptions.builder()
             .setCoder(FAILSAFE_ELEMENT_CODER)
-            .setIgnoreFields(destinationInfo.getIgnoredPubSubColumnsNames())
             .build();
 
-    FailsafeModJsonToChangelogTableRowTransformer.FailsafeModJsonToTableRow
+    FailsafeModJsonToPubSubMessageTransformer.FailsafeModJsonToPubSubMessage
         failsafeModJsonToTableRow =
-        new FailsafeModJsonToChangelogTableRowTransformer.FailsafeModJsonToTableRow(
+        new FailsafeModJsonToPubSubMessageTransformer.FailsafeModJsonToPubSubMessage(
             pubSub, failsafeModJsonToTableRowOptions);
 
     PCollectionTuple tableRowTuple =
         failsafeModJson.apply("Mod JSON To TableRow", failsafeModJsonToTableRow);
 
+    /** Step 3 */
+    System.out.println(tableRowTuple);
     WriteResult writeResult =
         tableRowTuple
             .get(failsafeModJsonToTableRow.transformOut)
             .apply(
                 "Write To PubSub",
-                PubSubIO.<TableRow>write()
-                    .to(pubSub.getDynamicDestinations())
+                PubSubIO.<PubSubMessage>write()
+                    .to(pubSub.topic())
                     .withFormatFunction(
                         BigtableChangeStreamsToPubSub::removeIntermediateMetadataFields)
                     .withFormatRecordOnFailureFunction(element -> element)
@@ -343,19 +342,6 @@ public final class BigtableChangeStreamsToPubSub {
     return StringUtils.isEmpty(options.getBigtableReadProjectId())
         ? options.getProject()
         : options.getBigtableReadProjectId();
-  }
-
-  private static String getPubSubChangelogTableName(
-      BigtableChangeStreamsToPubSubOptions options) {
-    return StringUtils.isEmpty(options.getPubSubChangelogTableName())
-        ? options.getBigtableReadTableId() + "_changelog"
-        : options.getPubSubChangelogTableName();
-  }
-
-  private static String getPubSubProjectId(BigtableChangeStreamsToPubSubOptions options) {
-    return StringUtils.isEmpty(options.getPubSubProjectId())
-        ? options.getProject()
-        : options.getPubSubProjectId();
   }
 
   /**

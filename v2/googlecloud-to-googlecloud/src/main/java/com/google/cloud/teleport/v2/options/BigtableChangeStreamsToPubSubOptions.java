@@ -22,7 +22,7 @@ import org.apache.beam.sdk.options.Default;
 import org.apache.beam.sdk.options.Validation;
 
 /**
- * The {@link BigtableChangeStreamsToBigQueryOptions} class provides the custom execution options
+ * The {@link BigtableChangeStreamsToPubSubOptions} class provides the custom execution options
  * passed by the executor at the command-line.
  */
 public interface BigtableChangeStreamsToPubSubOptions
@@ -30,122 +30,60 @@ public interface BigtableChangeStreamsToPubSubOptions
 
   @TemplateParameter.Text(
       order = 1,
-      description = "BigQuery dataset",
-      helpText = "The BigQuery dataset for change streams output.")
+      description = "The output Pub/Sub topic",
+      helpText = "The Pub/Sub topic to publish PubSubMessage.")
   @Validation.Required
-  String getBigQueryDataset();
+  String getPubSubTopic();
 
-  void setBigQueryDataset(String value);
+  void setPubSubTopic(String pubSubTopic);
 
-  @TemplateParameter.Boolean(
+  @TemplateParameter.Text(
       order = 2,
       optional = true,
-      description = "Write rowkeys as BigQuery BYTES",
-      helpText =
-          "When set true rowkeys are written to BYTES column, otherwise to STRING column. "
-              + "Defaults to false.")
-  @Default.Boolean(false)
-  Boolean getWriteRowkeyAsBytes();
+      description = "The encoding of the message written into PubSub",
+      helpText = "The format of the message to be written into PubSub. "
+          + "Allowed formats are Binary and JSON Text.")
+  @Default.String("JSON")
+  String getMessageEncoding();
 
-  void setWriteRowkeyAsBytes(Boolean value);
+  void setMessageEncoding(String messageEncoding);
 
-  @TemplateParameter.Boolean(
+  @TemplateParameter.Text(
       order = 3,
       optional = true,
-      description = "Write values as BigQuery BYTES",
-      helpText =
-          "When set true values are written to BYTES column, otherwise to STRING column. "
-              + "Defaults to false.")
-  @Default.Boolean(false)
-  Boolean getWriteValuesAsBytes();
+      description = "The format of the message written into PubSub",
+      helpText = "The message format chosen for outputting data to PubSub. "
+          + "Allowed formats are AVRO, Protocol Buffer and JSON Text.")
+  @Default.String("JSON")
+  String getMessageFormat();
 
-  void setWriteValuesAsBytes(Boolean value);
+  void setMessageFormat(String messageFormat);
 
   @TemplateParameter.Boolean(
       order = 4,
       optional = true,
-      description = "Write Bigtable timestamp as BigQuery INT",
-      helpText =
-          "When set true values are written to INT column, otherwise to TIMESTAMP column. "
-              + "Columns affected: `timestamp`, `timestamp_from`, `timestamp_to`. "
-              + "Defaults to false. When set to true the value is a number of microseconds "
-              + "since midnight of 01-JAN-1970")
+      description = "Strip value for SetCell mutation",
+      helpText = " If true the SetCell mutation message won’t include the value written.")
   @Default.Boolean(false)
-  Boolean getWriteNumericTimestamps();
+  Boolean getStripValue();
 
-  void setWriteNumericTimestamps(Boolean value);
-
-  @TemplateParameter.ProjectId(
-      order = 5,
-      optional = true,
-      description = "BigQuery project ID",
-      helpText = "The BigQuery Project. Default is the project for the Dataflow job.")
-  @Default.String("")
-  String getBigQueryProjectId();
-
-  void setBigQueryProjectId(String value);
-
-  @TemplateParameter.Text(
-      order = 6,
-      optional = true,
-      description = "BigQuery changelog table name",
-      helpText =
-          "The BigQuery table name that contains the changelog records."
-              + " Default: {bigtableTableId}_changelog")
-  @Default.String("")
-  String getBigQueryChangelogTableName();
-
-  void setBigQueryChangelogTableName(String value);
-
-  @TemplateParameter.Text(
-      order = 7,
-      optional = true,
-      description = "Changelog table will be partitioned at specified granularity",
-      helpText =
-          "When set, table partitioning will be in effect. Accepted values: `HOUR`, "
-              + "`DAY`, `MONTH`, `YEAR`. Default is no partitioning.")
-  @Default.String("")
-  String getBigQueryChangelogTablePartitionGranularity();
-
-  void setBigQueryChangelogTablePartitionGranularity(String value);
-
-  @TemplateParameter.Long(
-      order = 8,
-      optional = true,
-      description = "Sets partition expiration time in milliseconds",
-      helpText =
-          "When set true partitions older than specified number of milliseconds will be "
-              + "deleted. Default is no expiration.")
-  Long getBigQueryChangelogTablePartitionExpirationMs();
-
-  void setBigQueryChangelogTablePartitionExpirationMs(Long value);
-
-  @TemplateParameter.Text(
-      order = 9,
-      optional = true,
-      description = "Optional changelog table columns to be disabled",
-      helpText =
-          "A comma-separated list of the changelog columns which will not be created and "
-              + "populated if specified. Supported values should be from the following list: `is_gc`, "
-              + "`source_instance`, `source_cluster`, `source_table`, `tiebreaker`, "
-              + "`big_query_commit_timestamp`. Defaults to all columns to be populated")
-  String getBigQueryChangelogTableFieldsToIgnore();
-
-  void setBigQueryChangelogTableFieldsToIgnore(String value);
+  void setStripValue(Boolean stripValue);
 
   @TemplateParameter.GcsWriteFolder(
-      order = 10,
+      order = 5,
       optional = true,
       description = "Dead letter queue directory",
-      helpText =
-          "The file path to store any unprocessed records with the reason they failed to be processed. Default is a directory under the Dataflow job's temp location. The default value is enough under most conditions.")
+      helpText = "The file path to store any unprocessed records with"
+          + " the reason they failed to be processed. "
+          + "Default is a directory under the Dataflow job's temp location. "
+          + "The default value is enough under most conditions.")
   @Default.String("")
   String getDlqDirectory();
 
   void setDlqDirectory(String value);
 
   @TemplateParameter.Integer(
-      order = 11,
+      order = 6,
       optional = true,
       description = "Dead letter queue retry minutes",
       helpText = "The number of minutes between dead letter queue retries. Defaults to 10.")
@@ -155,7 +93,7 @@ public interface BigtableChangeStreamsToPubSubOptions
   void setDlqRetryMinutes(Integer value);
 
   @TemplateParameter.Integer(
-      order = 12,
+      order = 7,
       optional = true,
       description = "Dead letter maximum retries",
       helpText = "The number of attempts to process change stream mutations. Defaults to 5.")
@@ -163,4 +101,17 @@ public interface BigtableChangeStreamsToPubSubOptions
   Integer getDlqMaxRetries();
 
   void setDlqMaxRetries(Integer value);
+
+  @TemplateParameter.Text(
+      order = 8,
+      optional = true,
+      description = "Pub/Sub API",
+      helpText =
+          "Pub/Sub API used to implement the pipeline. Allowed APIs are pubsubio and native_client."
+              + " Default is pubsubio. For a small QPS, native_client can achieve a smaller latency"
+              + " than pubsubio. For a large QPS, pubsubio has better and more stable performance.")
+  @Default.String("pubsubio")
+  String getPubSubAPI();
+
+  void setPubSubAPI(String pubSubAPI);
 }

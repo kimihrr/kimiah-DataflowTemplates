@@ -22,5 +22,5 @@ import org.json.JSONObject;
  * consumption.
  */
 public interface PubSubValueFormatter {
-  Object format(BigQueryUtils bigQuery, JSONObject chg) throws Exception;
+  Object format(PubSubUtils bigQuery, JSONObject chg) throws Exception;
 }
