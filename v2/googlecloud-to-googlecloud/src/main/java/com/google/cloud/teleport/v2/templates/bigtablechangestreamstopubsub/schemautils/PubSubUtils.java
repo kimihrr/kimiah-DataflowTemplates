@@ -24,9 +24,9 @@ import java.io.Serializable;
 public class PubSubUtils implements Serializable {
 
 
-  private final BigtableSource source;
-  private final PubSubDestination destination;
-  private final String pubSubAPI;
+  public final BigtableSource source;
+  public final PubSubDestination destination;
+  public final String pubSubAPI;
 
   public PubSubUtils(
       BigtableSource sourceInfo, PubSubDestination destinationInfo,

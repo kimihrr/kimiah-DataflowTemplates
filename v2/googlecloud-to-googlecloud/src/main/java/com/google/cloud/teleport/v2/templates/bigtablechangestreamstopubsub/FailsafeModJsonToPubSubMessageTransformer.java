@@ -21,9 +21,9 @@ import com.google.cloud.pubsublite.proto.PubSubMessage;
 import com.google.cloud.teleport.v2.DataChangeRecord;
 import com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub.model.Mod;
 import com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub.schemautils.PubSubUtils;
+import com.google.pubsub.v1.PubsubMessage;
+import com.google.pubsub.v1.TopicName;
 import com.google.cloud.teleport.v2.transforms.PublishToPubSubDoFn;
-import com.google.cloud.teleport.v2.transforms.WriteDataChangeRecordsToAvro.DataChangeRecordToAvroFn;
-import com.google.cloud.teleport.v2.transforms.WriteDataChangeRecordsToJson.DataChangeRecordToJsonTextFn;
 import com.google.cloud.teleport.v2.values.FailsafeElement;
 import org.apache.beam.sdk.coders.AvroCoder;
 import org.apache.beam.sdk.coders.CoderException;
@@ -40,16 +40,17 @@ import org.apache.beam.sdk.values.TupleTag;
 import org.apache.beam.sdk.values.TupleTagList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.base.Throwables;
 
 /**
  * Class {@link FailsafeModJsonToPubSubMessageTransformer} provides methods that convert a
- * {@link Mod} JSON string wrapped in {@link FailsafeElement} to a {@link TableRow}.
+ * {@link Mod} JSON string wrapped in {@link FailsafeElement} to a {@link PubSubMessage}.
  */
 public final class FailsafeModJsonToPubSubMessageTransformer {
 
   /**
    * Primary class for taking a {@link FailsafeElement} {@link Mod} JSON input and converting to a
-   * {@link TableRow}.
+   * {@link PubSubMessage}.
    */
   public static class FailsafeModJsonToPubSubMessage
       extends PTransform<PCollection<FailsafeElement<String, String>>, PCollectionTuple> {
@@ -79,77 +80,6 @@ public final class FailsafeModJsonToPubSubMessageTransformer {
       this.failsafeModJsonToPubSubMessageOptions = failsafeModJsonToPubSubMessageOptions;
     }
 
-
-    public PCollectionTuple expand(PCollection<FailsafeElement<String, String>> records) {
-      PCollection<byte[]> encodedRecords = null;
-
-      /*
-       * Calls appropriate class Builder to performs PTransform based on user provided File Format.
-       */
-      switch (messageFormat()) {
-        case "AVRO":
-          AvroCoder<DataChangeRecord> coder =
-              AvroCoder.of(com.google.cloud.teleport.v2.DataChangeRecord.class);
-          encodedRecords =
-              records
-                  .apply(
-                      "Write DataChangeRecord into AVRO",
-                      MapElements.via(new DataChangeRecordToAvroFn()))
-                  .apply(
-                      "Convert encoded DataChangeRecord in AVRO to bytes to be saved into"
-                          + " PubsubMessage.",
-                      ParDo.of(
-                          // Convert encoded DataChangeRecord in AVRO to bytes that can be saved into
-                          // PubsubMessage.
-                          new DoFn<com.google.cloud.teleport.v2.DataChangeRecord, byte[]>() {
-                            @ProcessElement
-                            public void processElement(ProcessContext context) {
-                              com.google.cloud.teleport.v2.DataChangeRecord record =
-                                  context.element();
-                              byte[] encodedRecord = null;
-                              try {
-                                encodedRecord = CoderUtils.encodeToByteArray(coder, record);
-                              } catch (CoderException ce) {
-                                throw new RuntimeException(ce);
-                              }
-                              context.output(encodedRecord);
-                            }
-                          }));
-          sendToPubSub(encodedRecords);
-
-          break;
-        case "JSON":
-          encodedRecords =
-              records
-                  .apply(
-                      "Write DataChangeRecord into JSON",
-                      MapElements.via(new DataChangeRecordToJsonTextFn()))
-                  .apply(
-                      "Convert encoded DataChangeRecord in JSON to bytes to be saved into"
-                          + " PubsubMessage.",
-                      ParDo.of(
-                          new DoFn<String, byte[]>() {
-                            @ProcessElement
-                            public void processElement(ProcessContext context) {
-                              String record = context.element();
-                              byte[] encodedRecord = record.getBytes();
-                              context.output(encodedRecord);
-                            }
-                          }));
-          sendToPubSub(encodedRecords);
-          break;
-
-        default:
-          final String errorMessage =
-              "Invalid output format:"
-                  + messageFormat()
-                  + ". Supported output formats: JSON, AVRO";
-          LOG.info(errorMessage);
-          throw new IllegalArgumentException(errorMessage);
-      }
-      return encodedRecords;
-    }
-
     public PCollectionTuple expand(PCollection<FailsafeElement<String, String>> input) {
       PCollectionTuple out =
           input.apply(
@@ -165,17 +95,17 @@ public final class FailsafeModJsonToPubSubMessageTransformer {
 
     /**
      * The {@link FailsafeModJsonToTableRowFn} converts a {@link Mod} JSON string wrapped in {@link
-     * FailsafeElement} to a {@link TableRow}.
+     * FailsafeElement} to a {@link PubSubMesage}.
      */
     public static class FailsafeModJsonToTableRowFn
-        extends DoFn<FailsafeElement<String, String>, TableRow> {
+        extends DoFn<FailsafeElement<String, String>, PubSubMessage> {
       private final PubSubUtils pubSubUtils;
-      public TupleTag<TableRow> transformOut;
+      public TupleTag<PubSubMessage> transformOut;
       public TupleTag<FailsafeElement<String, String>> transformDeadLetterOut;
 
       public FailsafeModJsonToTableRowFn(
           PubSubUtils pubSubUtils,
-          TupleTag<TableRow> transformOut,
+          TupleTag<PubSubMessage> transformOut,
           TupleTag<FailsafeElement<String, String>> transformDeadLetterOut) {
         this.pubSubUtils = pubSubUtils;
         this.transformOut = transformOut;
@@ -196,18 +126,12 @@ public final class FailsafeModJsonToPubSubMessageTransformer {
         }
 
         try {
-          TableRow tableRow = modJsonStringToTableRow(failsafeModJsonString.getPayload());
-          if (tableRow == null) {
-            // TableRow was not generated because pipeline configuration requires ignoring some
-            // column / column families
+          PubSubMessage pubSubMessage = modJsonStringToPubSubMessage(failsafeModJsonString.getPayload());
+          if (pubSubMessage == null) {
             return;
           }
 
-          for (String ignoreField : ignoreFields) {
-            tableRow.remove(ignoreField);
-          }
-
-          context.output(tableRow);
+          context.output(pubSubMessage);
         } catch (Exception e) {
           context.output(
               transformDeadLetterOut,
@@ -217,7 +141,55 @@ public final class FailsafeModJsonToPubSubMessageTransformer {
         }
       }
 
-      private TableRow modJsonStringToTableRow(String modJsonString) throws Exception {
+      private PubSubMessage modJsonStringToPubSubMessage(String modJsonString)
+          throws IOException, InterruptedException  {
+        Publisher publisher = null;
+
+        try {
+          // Create a publisher instance with default settings bound to the topic
+          publisher = Publisher.newBuilder(topicName).build();
+
+          List<String> messages = Arrays.asList("first message", "second message");
+
+          for (final String message : messages) {
+            ByteString data = ByteString.copyFromUtf8(message);
+            PubsubMessage pubsubMessage = PubsubMessage.newBuilder().setData(data).build();
+
+            // Once published, returns a server-assigned message id (unique within the topic)
+            ApiFuture<String> future = publisher.publish(pubsubMessage);
+
+            // Add an asynchronous callback to handle success / failure
+            ApiFutures.addCallback(
+                future,
+                new ApiFutureCallback<String>() {
+
+                  @Override
+                  public void onFailure(Throwable throwable) {
+                    if (throwable instanceof ApiException) {
+                      ApiException apiException = ((ApiException) throwable);
+                      // details on the API exception
+                      System.out.println(apiException.getStatusCode().getCode());
+                      System.out.println(apiException.isRetryable());
+                    }
+                    System.out.println("Error publishing message : " + message);
+                  }
+
+                  @Override
+                  public void onSuccess(String messageId) {
+                    // Once published, returns server-assigned message ids (unique within the topic)
+                    System.out.println("Published message ID: " + messageId);
+                  }
+                },
+                MoreExecutors.directExecutor());
+          }
+        } finally {
+          if (publisher != null) {
+            // When finished with the publisher, shutdown to free up resources.
+            publisher.shutdown();
+            publisher.awaitTermination(1, TimeUnit.MINUTES);
+          }
+        }
+      }
         ObjectNode modObjectNode = (ObjectNode) new ObjectMapper().readTree(modJsonString);
         for (TransientColumn transientColumn : TransientColumn.values()) {
           if (modObjectNode.has(transientColumn.getColumnName())) {
@@ -257,18 +229,22 @@ public final class FailsafeModJsonToPubSubMessageTransformer {
     @AutoValue.Builder
     public abstract static class FailsafeModJsonToPubSubMessageOptions {
 
-      public abstract FileFormatFactorySpannerChangeStreamsToPubSub.WriteToPubSubBuilder setOutputDataFormat(String value);
+      public abstract ImmutableSet<String> getIgnoreFields();
 
-      public abstract FileFormatFactorySpannerChangeStreamsToPubSub.WriteToPubSubBuilder setProjectId(String value);
+      public abstract FailsafeElementCoder<String, String> getCoder();
 
-      public abstract FileFormatFactorySpannerChangeStreamsToPubSub.WriteToPubSubBuilder setPubsubAPI(String value);
+      static Builder builder() {
+        return new AutoValue_FailsafeModJsonToChangelogTableRowTransformer_FailsafeModJsonToTableRowOptions
+            .Builder();
+      }
 
-      public abstract FileFormatFactorySpannerChangeStreamsToPubSub.WriteToPubSubBuilder setPubsubTopicName(String value);
+      @AutoValue.Builder
+      abstract static class Builder {
+        abstract Builder setIgnoreFields(ImmutableSet<String> ignoreFields);
 
-      abstract FileFormatFactorySpannerChangeStreamsToPubSub autoBuild();
+        abstract Builder setCoder(FailsafeElementCoder<String, String> coder);
 
-      public FileFormatFactorySpannerChangeStreamsToPubSub build() {
-        return autoBuild();
+        abstract FailsafeModJsonToTableRowOptions build();
       }
     }
 

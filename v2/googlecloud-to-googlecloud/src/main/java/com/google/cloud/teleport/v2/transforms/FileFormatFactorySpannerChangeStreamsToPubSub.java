@@ -132,7 +132,7 @@ public abstract class FileFormatFactorySpannerChangeStreamsToPubSub
     return encodedRecords;
   }
 
-  private void sendToPubSub(PCollection<byte[]> encodedRecords) {
+    private void sendToPubSub(PCollection<byte[]> encodedRecords) {
     String pubsubTopicName = pubsubTopicName();
     String pubsubAPI = pubsubAPI();
     String projectId = projectId();
