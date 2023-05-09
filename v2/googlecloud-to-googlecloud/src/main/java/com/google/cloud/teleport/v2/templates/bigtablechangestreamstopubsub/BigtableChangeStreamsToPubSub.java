@@ -29,10 +29,10 @@ import com.google.cloud.teleport.v2.cdc.dlq.DeadLetterQueueManager;
 import com.google.cloud.teleport.v2.cdc.dlq.StringDeadLetterQueueSanitizer;
 import com.google.cloud.teleport.v2.coders.FailsafeElementCoder;
 import com.google.cloud.teleport.v2.options.BigtableChangeStreamsToPubSubOptions;
-import com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub.model.PubSubDestination;
 import com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub.model.BigtableSource;
 import com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub.model.Mod;
 import com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub.model.ModType;
+import com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub.model.PubSubDestination;
 import com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub.model.TransientColumn;
 import com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub.model.UnsupportedEntryException;
 import com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub.schemautils.PubSubUtils;
@@ -175,8 +175,9 @@ public final class BigtableChangeStreamsToPubSub {
         new PubSubDestination(
             options.getPubSubTopic(), options.getMessageFormat(), options.getMessageEncoding());
 
-    PubSubUtils pubSub = new PubSubUtils(
-        sourceInfo, destinationInfo, options.getPubSubAPI(), options.getMessageEncoding());
+    PubSubUtils pubSub =
+        new PubSubUtils(
+            sourceInfo, destinationInfo, options.getPubSubAPI(), options.getMessageEncoding());
 
     /*
      * Stages: 1) Read {@link ChangeStreamMutation} from change stream. 2) Create {@link
@@ -208,8 +209,7 @@ public final class BigtableChangeStreamsToPubSub {
           readChangeStream.withMetadataTableTableId(
               options.getBigtableChangeStreamsMetadataTableTableId());
     }
-    /** Step 2: just return the output for sending to pubSub and dlq*/
-
+    /** Step 2: just return the output for sending to pubSub and dlq */
     PCollection<ChangeStreamMutation> dataChangeRecord =
         pipeline
             .apply("Read from Cloud Bigtable Change Streams", readChangeStream)
@@ -246,14 +246,15 @@ public final class BigtableChangeStreamsToPubSub {
 
     FailsafeModJsonToPubSubMessageTransformer.FailsafeModJsonToPubSubMessageOptions
         failsafeModJsonToTableRowOptions =
-        FailsafeModJsonToPubSubMessageTransformer.FailsafeModJsonToPubSubMessageOptions.builder()
-            .setCoder(FAILSAFE_ELEMENT_CODER)
-            .build();
+            FailsafeModJsonToPubSubMessageTransformer.FailsafeModJsonToPubSubMessageOptions
+                .builder()
+                .setCoder(FAILSAFE_ELEMENT_CODER)
+                .build();
 
     FailsafeModJsonToPubSubMessageTransformer.FailsafeModJsonToPubSubMessage
         failsafeModJsonToTableRow =
-        new FailsafeModJsonToPubSubMessageTransformer.FailsafeModJsonToPubSubMessage(
-            pubSub, failsafeModJsonToTableRowOptions);
+            new FailsafeModJsonToPubSubMessageTransformer.FailsafeModJsonToPubSubMessage(
+                pubSub, failsafeModJsonToTableRowOptions);
 
     PCollectionTuple tableRowTuple =
         failsafeModJson.apply("Mod JSON To TableRow", failsafeModJsonToTableRow);

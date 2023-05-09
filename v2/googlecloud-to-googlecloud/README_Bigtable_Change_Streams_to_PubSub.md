@@ -177,7 +177,7 @@ gcloud dataflow flex-template run "bigtable-change-streams-to-bigquery-job" \
   --parameters "bigtableReadProjectId=$BIGTABLE_READ_PROJECT_ID" \
   --parameters "bigtableRpcAttemptTimeoutMs=$BIGTABLE_RPC_ATTEMPT_TIMEOUT_MS" \
   --parameters "bigtableRpcTimeoutMs=$BIGTABLE_RPC_TIMEOUT_MS" \
-  --parameters "bigtableAdditionalRetryCodes=$BIGTABLE_ADDITIONAL_RETRY_CODES" 
+  --parameters "bigtableAdditionalRetryCodes=$BIGTABLE_ADDITIONAL_RETRY_CODES"
 ```
 
 For more information about the command, please check:

@@ -137,6 +137,7 @@ public interface BigtableCommonOptions extends GcpOptions {
 
     void setBigtableBulkWriteMaxRequestSizeBytes(Integer value);
   }
+
   interface ReadOptions extends BigtableCommonOptions {
     @TemplateParameter.Text(
         order = 1,

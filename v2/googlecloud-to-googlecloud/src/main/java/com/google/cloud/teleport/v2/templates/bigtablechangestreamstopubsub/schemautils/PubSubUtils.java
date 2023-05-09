@@ -14,8 +14,9 @@
  * the License.
  */
 package com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub.schemautils;
-import com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub.model.PubSubDestination;
+
 import com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub.model.BigtableSource;
+import com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub.model.PubSubDestination;
 import java.io.Serializable;
 
 /**
@@ -23,17 +24,17 @@ import java.io.Serializable;
  */
 public class PubSubUtils implements Serializable {
 
-
   public final BigtableSource source;
   public final PubSubDestination destination;
   public final String pubSubAPI;
 
   public PubSubUtils(
-      BigtableSource sourceInfo, PubSubDestination destinationInfo,
-      String pubSubAPI, String messageEncoding) {
+      BigtableSource sourceInfo,
+      PubSubDestination destinationInfo,
+      String pubSubAPI,
+      String messageEncoding) {
     this.source = sourceInfo;
     this.destination = destinationInfo;
     this.pubSubAPI = pubSubAPI;
   }
-
 }
