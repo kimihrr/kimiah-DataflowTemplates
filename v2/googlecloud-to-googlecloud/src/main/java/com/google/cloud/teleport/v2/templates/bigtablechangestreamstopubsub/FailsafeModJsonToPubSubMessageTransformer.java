@@ -15,20 +15,15 @@
  */
 package com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub;
 
-import com.google.api.services.bigquery.model.TableRow;
 import com.google.auto.value.AutoValue;
 import com.google.cloud.pubsublite.proto.PubSubMessage;
-import com.google.cloud.teleport.v2.DataChangeRecord;
 import com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub.model.Mod;
 import com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub.schemautils.PubSubUtils;
 import com.google.pubsub.v1.PubsubMessage;
+import com.google.cloud.pubsub.v1.Publisher;
 import com.google.pubsub.v1.TopicName;
 import com.google.cloud.teleport.v2.transforms.PublishToPubSubDoFn;
 import com.google.cloud.teleport.v2.values.FailsafeElement;
-import org.apache.beam.sdk.coders.AvroCoder;
-import org.apache.beam.sdk.coders.CoderException;
-import org.apache.beam.sdk.io.gcp.pubsub.PubsubIO;
-import org.apache.beam.sdk.io.gcp.pubsub.PubsubMessage;
 import org.apache.beam.sdk.transforms.DoFn;
 import org.apache.beam.sdk.transforms.MapElements;
 import org.apache.beam.sdk.transforms.PTransform;
@@ -41,6 +36,16 @@ import org.apache.beam.sdk.values.TupleTagList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.base.Throwables;
+import java.io.IOException;
+import com.google.api.core.ApiFuture;
+import com.google.api.core.ApiFutureCallback;
+import com.google.api.core.ApiFutures;
+import com.google.api.gax.rpc.ApiException;
+import com.google.common.util.concurrent.MoreExecutors;
+import com.google.protobuf.ByteString;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Class {@link FailsafeModJsonToPubSubMessageTransformer} provides methods that convert a
@@ -143,45 +148,48 @@ public final class FailsafeModJsonToPubSubMessageTransformer {
 
       private PubSubMessage modJsonStringToPubSubMessage(String modJsonString)
           throws IOException, InterruptedException  {
+        TopicName topicName = TopicName.of(pubSubUtils.source.getBigtableProjectId(), pubSubUtils.destination.pubSubTopic);
         Publisher publisher = null;
+        switch (pubSubUtils.destination.messageFormat) {
+          case "AVRO":
+            String message = modJsonString;
+          case "Protobuf":
+            String message = modJsonString;
+        }
 
         try {
           // Create a publisher instance with default settings bound to the topic
           publisher = Publisher.newBuilder(topicName).build();
 
-          List<String> messages = Arrays.asList("first message", "second message");
+          ByteString data = ByteString.copyFromUtf8(modJsonString);
+          PubsubMessage pubsubMessage = PubsubMessage.newBuilder().setData(data).build();
 
-          for (final String message : messages) {
-            ByteString data = ByteString.copyFromUtf8(message);
-            PubsubMessage pubsubMessage = PubsubMessage.newBuilder().setData(data).build();
+          // Once published, returns a server-assigned message id (unique within the topic)
+          ApiFuture<String> future = publisher.publish(pubsubMessage);
 
-            // Once published, returns a server-assigned message id (unique within the topic)
-            ApiFuture<String> future = publisher.publish(pubsubMessage);
+          // Add an asynchronous callback to handle success / failure
+          ApiFutures.addCallback(
+              future,
+              new ApiFutureCallback<String>() {
 
-            // Add an asynchronous callback to handle success / failure
-            ApiFutures.addCallback(
-                future,
-                new ApiFutureCallback<String>() {
-
-                  @Override
-                  public void onFailure(Throwable throwable) {
-                    if (throwable instanceof ApiException) {
-                      ApiException apiException = ((ApiException) throwable);
-                      // details on the API exception
-                      System.out.println(apiException.getStatusCode().getCode());
-                      System.out.println(apiException.isRetryable());
-                    }
-                    System.out.println("Error publishing message : " + message);
+                @Override
+                public void onFailure(Throwable throwable) {
+                  if (throwable instanceof ApiException) {
+                    ApiException apiException = ((ApiException) throwable);
+                    // details on the API exception
+                    System.out.println(apiException.getStatusCode().getCode());
+                    System.out.println(apiException.isRetryable());
                   }
+                  System.out.println("Error publishing message : " + modJsonString);
+                }
 
-                  @Override
-                  public void onSuccess(String messageId) {
-                    // Once published, returns server-assigned message ids (unique within the topic)
-                    System.out.println("Published message ID: " + messageId);
-                  }
-                },
-                MoreExecutors.directExecutor());
-          }
+                @Override
+                public void onSuccess(String messageId) {
+                  // Once published, returns server-assigned message ids (unique within the topic)
+                  System.out.println("Published message ID: " + messageId);
+                }
+              },
+              MoreExecutors.directExecutor());
         } finally {
           if (publisher != null) {
             // When finished with the publisher, shutdown to free up resources.
@@ -190,40 +198,7 @@ public final class FailsafeModJsonToPubSubMessageTransformer {
           }
         }
       }
-        ObjectNode modObjectNode = (ObjectNode) new ObjectMapper().readTree(modJsonString);
-        for (TransientColumn transientColumn : TransientColumn.values()) {
-          if (modObjectNode.has(transientColumn.getColumnName())) {
-            modObjectNode.remove(transientColumn.getColumnName());
-          }
-        }
-
-        TableRow tableRow = new TableRow();
-        if (bigQueryUtils.setTableRowFields(
-            Mod.fromJson(modObjectNode.toString()), modJsonString, tableRow)) {
-          return tableRow;
-        } else {
-          return null;
-        }
-      }
-    }
-  }
-
-    /** Method that takes in byte arrays and outputs PubsubMessages. */
-    private PCollection<PubsubMessage> convertByteArrayToPubsubMessage(
-        PCollection<byte[]> encodedRecords) {
-      PCollection<PubsubMessage> messageCollection =
-          encodedRecords.apply(
-              ParDo.of(
-                  new DoFn<byte[], PubsubMessage>() {
-                    @ProcessElement
-                    public void processElement(ProcessContext context) {
-                      byte[] encodedRecord = context.element();
-                      PubsubMessage pubsubMessage = new PubsubMessage(encodedRecord, null);
-                      context.output(pubsubMessage);
-                    }
-                  }));
-      return messageCollection;
-    }
+   }
 
     /** Builder for {@link FileFormatFactorySpannerChangeStreamsToPubSub}. */
     @AutoValue.Builder
