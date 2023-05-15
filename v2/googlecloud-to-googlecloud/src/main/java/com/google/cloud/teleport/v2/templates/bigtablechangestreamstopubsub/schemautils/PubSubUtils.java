@@ -24,17 +24,22 @@ import java.io.Serializable;
  */
 public class PubSubUtils implements Serializable {
 
-  public final BigtableSource source;
-  public final PubSubDestination destination;
-  public final String pubSubAPI;
+  private final BigtableSource source;
+  private final PubSubDestination destination;
+  private final String pubSubAPI;
 
   public PubSubUtils(
       BigtableSource sourceInfo,
       PubSubDestination destinationInfo,
-      String pubSubAPI,
-      String messageEncoding) {
+      String pubSubAPI) {
     this.source = sourceInfo;
     this.destination = destinationInfo;
     this.pubSubAPI = pubSubAPI;
   }
+
+  public BigtableSource getSource() { return source; }
+
+  public PubSubDestination getDestination() { return destination; }
+
+  public String getPubSubAPI() { return pubSubAPI; }
 }

@@ -114,4 +114,14 @@ public interface BigtableChangeStreamsToPubSubOptions
   String getPubSubAPI();
 
   void setPubSubAPI(String pubSubAPI);
+
+  @TemplateParameter.ProjectId(
+          order = 9,
+          optional = true,
+          description = "PubSub project ID",
+          helpText = "The PubSub Project. Default is the project for the Dataflow job.")
+  @Default.String("")
+  String getPubSubProjectId();
+
+  void setPubSubProjectId(String value);
 }

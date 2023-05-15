@@ -17,12 +17,12 @@ package com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub;
 
 import com.google.api.services.bigquery.model.TableRow;
 import com.google.cloud.Timestamp;
+import org.apache.beam.sdk.io.gcp.pubsub.PubsubIO;
 import com.google.cloud.bigtable.data.v2.models.ChangeStreamMutation;
 import com.google.cloud.bigtable.data.v2.models.DeleteCells;
 import com.google.cloud.bigtable.data.v2.models.DeleteFamily;
 import com.google.cloud.bigtable.data.v2.models.Entry;
 import com.google.cloud.bigtable.data.v2.models.SetCell;
-import com.google.cloud.pubsublite.proto.PubSubMessage;
 import com.google.cloud.teleport.metadata.Template;
 import com.google.cloud.teleport.metadata.TemplateCategory;
 import com.google.cloud.teleport.v2.cdc.dlq.DeadLetterQueueManager;
@@ -61,6 +61,7 @@ import org.apache.beam.sdk.transforms.Values;
 import org.apache.beam.sdk.values.PCollection;
 import org.apache.beam.sdk.values.PCollectionList;
 import org.apache.beam.sdk.values.PCollectionTuple;
+import org.apache.beam.sdk.values.PDone;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -173,11 +174,14 @@ public final class BigtableChangeStreamsToPubSub {
 
     PubSubDestination destinationInfo =
         new PubSubDestination(
-            options.getPubSubTopic(), options.getMessageFormat(), options.getMessageEncoding());
+                getPubSubProjectId(options),
+                options.getPubSubTopic(),
+                options.getMessageFormat(),
+                options.getMessageEncoding());
 
     PubSubUtils pubSub =
         new PubSubUtils(
-            sourceInfo, destinationInfo, options.getPubSubAPI(), options.getMessageEncoding());
+            sourceInfo, destinationInfo, options.getPubSubAPI());
 
     /*
      * Stages: 1) Read {@link ChangeStreamMutation} from change stream. 2) Create {@link
@@ -244,46 +248,38 @@ public final class BigtableChangeStreamsToPubSub {
             .and(retryableDlqFailsafeModJson)
             .apply("Merge Source And DLQ Mod JSON", Flatten.pCollections());
 
-    FailsafeModJsonToPubSubMessageTransformer.FailsafeModJsonToPubSubMessageOptions
-        failsafeModJsonToTableRowOptions =
-            FailsafeModJsonToPubSubMessageTransformer.FailsafeModJsonToPubSubMessageOptions
+    FailsafeModJsonToPubsubMessageTransformer.FailsafeModJsonToPubsubMessageOptions
+        failsafeModJsonToPubsubOptions =
+            FailsafeModJsonToPubsubMessageTransformer.FailsafeModJsonToPubsubMessageOptions
                 .builder()
                 .setCoder(FAILSAFE_ELEMENT_CODER)
                 .build();
 
-    FailsafeModJsonToPubSubMessageTransformer.FailsafeModJsonToPubSubMessage
-        failsafeModJsonToTableRow =
-            new FailsafeModJsonToPubSubMessageTransformer.FailsafeModJsonToPubSubMessage(
-                pubSub, failsafeModJsonToTableRowOptions);
+    FailsafeModJsonToPubsubMessageTransformer.FailsafeModJsonToPubsubMessage
+        failsafeModJsonToPubsubMessage =
+            new FailsafeModJsonToPubsubMessageTransformer.FailsafeModJsonToPubsubMessage(
+                pubSub, failsafeModJsonToPubsubOptions);
 
-    PCollectionTuple tableRowTuple =
-        failsafeModJson.apply("Mod JSON To TableRow", failsafeModJsonToTableRow);
+    PCollectionTuple pubsubMessage =
+        failsafeModJson.apply("Mod JSON To pubsub", failsafeModJsonToPubsubMessage);
 
     /** Step 3 */
-    System.out.println(tableRowTuple);
-    WriteResult writeResult =
-        tableRowTuple
-            .get(failsafeModJsonToTableRow.transformOut)
+    /** Returns A {@link PTransform} that writes to a Google Cloud Pub/Sub stream. */
+    System.out.println(pubsubMessage);
+    PDone writeResult =
+            pubsubMessage
+            .get(failsafeModJsonToPubsubMessage.transformOut)
             .apply(
                 "Write To PubSub",
-                PubSubIO.<PubSubMessage>write()
-                    .to(pubSub.topic())
-                    .withFormatFunction(
-                        BigtableChangeStreamsToPubSub::removeIntermediateMetadataFields)
-                    .withFormatRecordOnFailureFunction(element -> element)
-                    .withCreateDisposition(CreateDisposition.CREATE_IF_NEEDED)
-                    .withWriteDisposition(WriteDisposition.WRITE_APPEND)
-                    .withExtendedErrorInfo()
-                    .withMethod(Write.Method.STREAMING_INSERTS)
-                    .withFailedInsertRetryPolicy(InsertRetryPolicy.retryTransientErrors()));
+                    PubsubIO.writeMessages().to(pubSub.getDestination().getPubSubTopic()));
 
     PCollection<String> transformDlqJson =
-        tableRowTuple
-            .get(failsafeModJsonToTableRow.transformDeadLetterOut)
+            pubsubMessage
+            .get(failsafeModJsonToPubsubMessage.transformDeadLetterOut)
             .apply(
                 "Failed Mod JSON During Table Row Transformation",
                 MapElements.via(new StringDeadLetterQueueSanitizer()));
-
+    /***
     PCollection<String> bqWriteDlqJson =
         writeResult
             .getFailedInsertsWithErr()
@@ -316,6 +312,7 @@ public final class BigtableChangeStreamsToPubSub {
                 .withTmpDirectory(dlqManager.getSevereDlqDirectory() + "tmp/")
                 .setIncludePaneInfo(true)
                 .build());
+     ***/
 
     return pipeline.run();
   }
@@ -343,6 +340,12 @@ public final class BigtableChangeStreamsToPubSub {
     return StringUtils.isEmpty(options.getBigtableReadProjectId())
         ? options.getProject()
         : options.getBigtableReadProjectId();
+  }
+
+  private static String getPubSubProjectId(BigtableChangeStreamsToPubSubOptions options) {
+    return StringUtils.isEmpty(options.getPubSubProjectId())
+            ? options.getProject()
+            : options.getPubSubProjectId();
   }
 
   /**

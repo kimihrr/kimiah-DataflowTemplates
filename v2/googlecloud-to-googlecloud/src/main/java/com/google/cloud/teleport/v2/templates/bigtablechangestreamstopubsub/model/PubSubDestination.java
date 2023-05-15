@@ -29,15 +29,24 @@ import org.apache.commons.lang3.StringUtils;
 
 /** Descriptor of PubSub destination. */
 public class PubSubDestination implements Serializable {
-
-  public final String pubSubTopic;
-  public final String messageFormat;
-  public final String messageEncoding;
+  private final String pubSubProject;
+  private final String pubSubTopic;
+  private final String messageFormat;
+  private final String messageEncoding;
 
   public PubSubDestination(
-      String pubSubTopic, String messageFormat, String messageEncoding) {
+      String pubSubProject, String pubSubTopic, String messageFormat, String messageEncoding) {
+    this.pubSubProject = pubSubProject;
     this.pubSubTopic = pubSubTopic;
     this.messageFormat = messageFormat;
     this.messageEncoding = messageEncoding;
   }
+
+  public String getPubSubProject() { return pubSubProject; }
+
+  public String getPubSubTopic() { return pubSubTopic; }
+
+  public String getMessageFormat() { return messageFormat; }
+
+  public String getMessageEncoding() { return messageEncoding; }
 }
