@@ -17,6 +17,7 @@ package com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub;
 
 import com.google.api.services.bigquery.model.TableRow;
 import com.google.cloud.Timestamp;
+import com.google.pubsub.v1.TopicName;
 import org.apache.beam.sdk.io.gcp.pubsub.PubsubIO;
 import com.google.cloud.bigtable.data.v2.models.ChangeStreamMutation;
 import com.google.cloud.bigtable.data.v2.models.DeleteCells;
@@ -245,8 +246,8 @@ public final class BigtableChangeStreamsToPubSub {
 
     PCollection<FailsafeElement<String, String>> failsafeModJson =
         PCollectionList.of(sourceFailsafeModJson)
-            .and(retryableDlqFailsafeModJson)
-            .apply("Merge Source And DLQ Mod JSON", Flatten.pCollections());
+           .and(retryableDlqFailsafeModJson)
+                .apply("Merge Source And DLQ Mod JSON", Flatten.pCollections());
 
     FailsafeModJsonToPubsubMessageTransformer.FailsafeModJsonToPubsubMessageOptions
         failsafeModJsonToPubsubOptions =
@@ -260,18 +261,10 @@ public final class BigtableChangeStreamsToPubSub {
             new FailsafeModJsonToPubsubMessageTransformer.FailsafeModJsonToPubsubMessage(
                 pubSub, failsafeModJsonToPubsubOptions);
 
+
     PCollectionTuple pubsubMessage =
         failsafeModJson.apply("Mod JSON To pubsub", failsafeModJsonToPubsubMessage);
 
-    /** Step 3 */
-    /** Returns A {@link PTransform} that writes to a Google Cloud Pub/Sub stream. */
-    System.out.println(pubsubMessage);
-    PDone writeResult =
-            pubsubMessage
-            .get(failsafeModJsonToPubsubMessage.transformOut)
-            .apply(
-                "Write To PubSub",
-                    PubsubIO.writeMessages().to(pubSub.getDestination().getPubSubTopic()));
 
     PCollection<String> transformDlqJson =
             pubsubMessage
@@ -279,16 +272,9 @@ public final class BigtableChangeStreamsToPubSub {
             .apply(
                 "Failed Mod JSON During Table Row Transformation",
                 MapElements.via(new StringDeadLetterQueueSanitizer()));
-    /***
-    PCollection<String> bqWriteDlqJson =
-        writeResult
-            .getFailedInsertsWithErr()
-            .apply(
-                "Failed Mod JSON During PubSub Writes",
-                MapElements.via(new PubSubDeadLetterQueueSanitizer()));
+
 
     PCollectionList.of(transformDlqJson)
-        .and(bqWriteDlqJson)
         .apply("Merge Failed Mod JSON From Transform And PubSub", Flatten.pCollections())
         .apply(
             "Write Failed Mod JSON To DLQ",
@@ -300,7 +286,8 @@ public final class BigtableChangeStreamsToPubSub {
 
     PCollection<FailsafeElement<String, String>> nonRetryableDlqModJsonFailsafe =
         dlqModJson.get(DeadLetterQueueManager.PERMANENT_ERRORS).setCoder(FAILSAFE_ELEMENT_CODER);
-
+    LOG.info("dlq manager servere dlq directory with date time: {}", dlqManager.getSevereDlqDirectoryWithDateTime());
+    LOG.info("dlq manager servere dlq directory: {}", dlqManager.getSevereDlqDirectory() + "tmp/");
     nonRetryableDlqModJsonFailsafe
         .apply(
             "Write Mod JSON With Non-retryable Error To DLQ",
@@ -312,7 +299,6 @@ public final class BigtableChangeStreamsToPubSub {
                 .withTmpDirectory(dlqManager.getSevereDlqDirectory() + "tmp/")
                 .setIncludePaneInfo(true)
                 .build());
-     ***/
 
     return pipeline.run();
   }
@@ -348,22 +334,6 @@ public final class BigtableChangeStreamsToPubSub {
             : options.getPubSubProjectId();
   }
 
-  /**
-   * Remove the following intermediate metadata fields that are not user data from {@link TableRow}:
-   * _metadata_error, _metadata_retry_count, _metadata_original_payload_json.
-   */
-  private static TableRow removeIntermediateMetadataFields(TableRow tableRow) {
-    TableRow cleanTableRow = tableRow.clone();
-    Set<String> allColumns = tableRow.keySet();
-
-    for (String column : allColumns) {
-      if (TransientColumn.isTransientColumn(column)) {
-        cleanTableRow.remove(column);
-      }
-    }
-
-    return cleanTableRow;
-  }
 
   /**
    * DoFn that converts a {@link ChangeStreamMutation} to multiple {@link Mod} in serialized JSON

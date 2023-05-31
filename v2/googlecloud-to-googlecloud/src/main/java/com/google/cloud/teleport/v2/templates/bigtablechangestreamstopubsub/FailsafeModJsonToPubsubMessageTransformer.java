@@ -15,10 +15,14 @@
  */
 package com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub;
 
+import com.google.api.core.ApiFuture;
+import com.google.api.core.ApiFutures;
 import com.google.auto.value.AutoValue;
+import com.google.cloud.pubsub.v1.Publisher;
 import com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub.model.Mod;
 import com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub.schemautils.PubSubUtils;
-import org.apache.beam.sdk.io.gcp.pubsub.PubsubMessage;
+import com.google.protobuf.ByteString;
+import com.google.pubsub.v1.PubsubMessage;
 import com.google.pubsub.v1.TopicName;
 import com.google.cloud.teleport.v2.coders.FailsafeElementCoder;
 import com.google.cloud.teleport.v2.values.FailsafeElement;
@@ -34,6 +38,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.base.Throwables;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Class {@link FailsafeModJsonToPubsubMessageTransformer} provides methods that convert a
@@ -58,7 +66,7 @@ public final class FailsafeModJsonToPubsubMessageTransformer {
     /**
      * The tag for the main output of the transformation.
      */
-    public TupleTag<PubsubMessage> transformOut = new TupleTag<>() {
+    public TupleTag<com.google.pubsub.v1.PubsubMessage> transformOut = new TupleTag<>() {
     };
 
     /**
@@ -99,6 +107,7 @@ public final class FailsafeModJsonToPubsubMessageTransformer {
       private final PubSubUtils pubSubUtils;
       public TupleTag<PubsubMessage> transformOut;
       public TupleTag<FailsafeElement<String, String>> transformDeadLetterOut;
+      private transient Publisher publisher;
 
       public FailsafeModJsonToPubsubMessageFn(
               PubSubUtils pubSubUtils,
@@ -111,27 +120,40 @@ public final class FailsafeModJsonToPubsubMessageTransformer {
 
       @Setup
       public void setUp() {
+        try {
+          final TopicName projectTopicName = TopicName.of(
+                  pubSubUtils.getDestination().getPubSubProject(), pubSubUtils.getDestination().getPubSubTopic());
+          publisher = Publisher.newBuilder(projectTopicName).build();
+        } catch (Exception e) {
+          throw new RuntimeException(e);
+        }
       }
 
       @Teardown
       public void tearDown() {
+        try {
+          if (publisher != null) {
+            publisher.shutdown();
+            publisher.awaitTermination(5, TimeUnit.MINUTES);
+          }
+        } catch (Exception e) {
+          throw new RuntimeException(e);
+        }
       }
 
       @ProcessElement
       public void processElement(ProcessContext context) {
+        LOG.info("Reading a failsafeModJsonString");
         FailsafeElement<String, String> failsafeModJsonString = context.element();
-        if (failsafeModJsonString == null) {
-          return;
-        }
+
+        LOG.info("");
 
         try {
-          PubsubMessage pubSubMessage = modJsonStringToPubsubMessage(failsafeModJsonString.getPayload());
-          if (pubSubMessage == null) {
-            return;
-          }
+          com.google.pubsub.v1.PubsubMessage pubSubMessage = publishModJsonStringToPubsubMessage(failsafeModJsonString.getPayload());
 
           context.output(pubSubMessage);
         } catch (Exception e) {
+          LOG.error("Writing to transform dead letter out", e);
           context.output(
                   transformDeadLetterOut,
                   FailsafeElement.of(failsafeModJsonString)
@@ -140,16 +162,20 @@ public final class FailsafeModJsonToPubsubMessageTransformer {
         }
       }
 
-      private PubsubMessage modJsonStringToPubsubMessage(String modJsonString)
-              throws IOException, InterruptedException {
-        TopicName topicName = TopicName.of(pubSubUtils.getDestination().getPubSubProject(),
-                pubSubUtils.getDestination().getPubSubTopic());
+      private PubsubMessage publishModJsonStringToPubsubMessage(String modJsonString)
+              throws Exception {
 
+        byte[] encodedRecords = modJsonString.getBytes();
 
-        byte[] encodedRecord = modJsonString.getBytes();
-        PubsubMessage pubsubMessage = new PubsubMessage(encodedRecord, null);
-        return pubsubMessage;
-
+        com.google.pubsub.v1.PubsubMessage v1PubsubMessage =
+                com.google.pubsub.v1.PubsubMessage.newBuilder()
+                        .setData(ByteString.copyFrom(encodedRecords))
+                        .build();
+        ApiFuture<String> messageIdFuture = publisher.publish(v1PubsubMessage);
+        List<ApiFuture<String>> futures = new ArrayList();
+        futures.add(messageIdFuture);
+        ApiFutures.allAsList(futures).get();
+        return v1PubsubMessage;
       }
     }
   }

@@ -36,6 +36,7 @@ public class StringDeadLetterQueueSanitizer
 
   @Override
   public String getJsonMessage(FailsafeElement<String, String> input) {
+    LOG.error("Getting original payload from failsafe element: {}", input.getOriginalPayload().length());
     return input.getOriginalPayload();
   }
 

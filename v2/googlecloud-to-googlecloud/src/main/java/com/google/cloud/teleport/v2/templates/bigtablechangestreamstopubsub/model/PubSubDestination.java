@@ -44,7 +44,9 @@ public class PubSubDestination implements Serializable {
 
   public String getPubSubProject() { return pubSubProject; }
 
-  public String getPubSubTopic() { return pubSubTopic; }
+  public String getPubSubTopic() {
+    return pubSubTopic;
+  }
 
   public String getMessageFormat() { return messageFormat; }
 
