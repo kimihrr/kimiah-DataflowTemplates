@@ -17,6 +17,8 @@ package com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub;
 
 import com.google.api.services.bigquery.model.TableRow;
 import com.google.cloud.Timestamp;
+import com.google.cloud.pubsub.v1.SchemaServiceClient;
+import com.google.protobuf.ByteString;
 import com.google.pubsub.v1.TopicName;
 import org.apache.beam.sdk.io.gcp.pubsub.PubsubIO;
 import com.google.cloud.bigtable.data.v2.models.ChangeStreamMutation;
@@ -47,11 +49,6 @@ import org.apache.beam.runners.dataflow.options.DataflowPipelineOptions;
 import org.apache.beam.sdk.Pipeline;
 import org.apache.beam.sdk.PipelineResult;
 import org.apache.beam.sdk.coders.StringUtf8Coder;
-import org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write;
-import org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.CreateDisposition;
-import org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO.Write.WriteDisposition;
-import org.apache.beam.sdk.io.gcp.bigquery.InsertRetryPolicy;
-import org.apache.beam.sdk.io.gcp.bigquery.WriteResult;
 import org.apache.beam.sdk.io.gcp.bigtable.BigtableIO;
 import org.apache.beam.sdk.options.PipelineOptionsFactory;
 import org.apache.beam.sdk.transforms.DoFn;
@@ -66,6 +63,20 @@ import org.apache.beam.sdk.values.PDone;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.google.cloud.pubsub.v1.TopicAdminClient;
+import com.google.pubsub.v1.GetTopicRequest;
+import com.google.pubsub.v1.ProjectName;
+import com.google.pubsub.v1.Topic;
+import java.io.IOException;
+import com.google.pubsub.v1.SchemaSettings;
+import com.google.pubsub.v1.Schema;
+import org.apache.avro.generic.GenericRecord;
+import org.apache.avro.io.DatumReader;
+import org.apache.avro.generic.GenericDatumReader;
+import org.apache.avro.file.DataFileReader;
+import java.io.File;
+import com.google.pubsub.v1.ValidateMessageRequest;
+import com.google.pubsub.v1.ValidateMessageResponse;
 
 /**
  * This pipeline ingests {@link ChangeStreamMutation} from Bigtable change stream. The {@link
@@ -214,6 +225,12 @@ public final class BigtableChangeStreamsToPubSub {
           readChangeStream.withMetadataTableTableId(
               options.getBigtableChangeStreamsMetadataTableTableId());
     }
+    if (!validateSchema(options)){
+      final String errorMessage =
+              "Invalid schema format:";
+      LOG.info(errorMessage);
+      throw new IllegalArgumentException(errorMessage);
+    }
     /** Step 2: just return the output for sending to pubSub and dlq */
     PCollection<ChangeStreamMutation> dataChangeRecord =
         pipeline
@@ -332,6 +349,38 @@ public final class BigtableChangeStreamsToPubSub {
     return StringUtils.isEmpty(options.getPubSubProjectId())
             ? options.getProject()
             : options.getPubSubProjectId();
+  }
+
+  private static Boolean validateSchema(BigtableChangeStreamsToPubSubOptions options){
+    try (TopicAdminClient topicAdminClient = TopicAdminClient.create()) {
+      GetTopicRequest request =
+              GetTopicRequest.newBuilder()
+                      .setTopic(TopicName.ofProjectTopicName(
+                              getPubSubProjectId(options), options.getPubSubTopic()).toString())
+                      .build();
+      Topic topic = topicAdminClient.getTopic(request);
+      if (topic.getSchemaSettings().getSchema().isEmpty()) {
+        return true;
+      } else {
+        LOG.error("There is Schema associated with the topic");
+        DatumReader<GenericRecord> datumReader = new GenericDatumReader<>();
+        DataFileReader<GenericRecord> dataFileReader = new DataFileReader<>(new File("changelogentry.avsc"), datumReader);
+        LOG.error("Schemaaaaa");
+        LOG.error("dataFileReader.toString().getBytes())");
+        try (SchemaServiceClient schemaServiceClient = SchemaServiceClient.create()) {
+          ProjectName parent = ProjectName.of(getPubSubProjectId(options));
+          ValidateMessageRequest validMessageRequest = ValidateMessageRequest.newBuilder()
+                  .setParent(parent.toString())
+                  .setMessage(ByteString.copyFrom(dataFileReader.toString().getBytes()))
+                  .build();
+          ValidateMessageResponse response = schemaServiceClient.validateMessage(validMessageRequest);
+          LOG.error(response.toString());
+        }
+      }
+    } catch (Exception e) {
+      return false;
+    }
+    return true;
   }
 
 
