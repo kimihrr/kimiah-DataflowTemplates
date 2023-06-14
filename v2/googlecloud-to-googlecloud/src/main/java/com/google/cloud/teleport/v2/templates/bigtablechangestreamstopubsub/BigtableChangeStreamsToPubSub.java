@@ -160,6 +160,12 @@ public final class BigtableChangeStreamsToPubSub {
     LOG.info("Requested Message Format is " + options.getMessageFormat());
     setOptions(options);
     validateOptions(options);
+    if (!validateSchema(options)){
+      final String errorMessage =
+              "Invalid schema format:";
+      LOG.info(errorMessage);
+      throw new IllegalArgumentException(errorMessage);
+    }
 
     String bigtableProject = getBigtableProjectId(options);
 
@@ -224,12 +230,6 @@ public final class BigtableChangeStreamsToPubSub {
       readChangeStream =
           readChangeStream.withMetadataTableTableId(
               options.getBigtableChangeStreamsMetadataTableTableId());
-    }
-    if (!validateSchema(options)){
-      final String errorMessage =
-              "Invalid schema format:";
-      LOG.info(errorMessage);
-      throw new IllegalArgumentException(errorMessage);
     }
     /** Step 2: just return the output for sending to pubSub and dlq */
     PCollection<ChangeStreamMutation> dataChangeRecord =

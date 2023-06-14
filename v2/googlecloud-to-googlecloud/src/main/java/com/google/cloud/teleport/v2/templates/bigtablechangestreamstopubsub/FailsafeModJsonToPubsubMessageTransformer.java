@@ -22,7 +22,9 @@ import com.google.cloud.pubsub.v1.Publisher;
 import com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub.model.Mod;
 import com.google.cloud.teleport.v2.templates.bigtablechangestreamstopubsub.schemautils.PubSubUtils;
 import com.google.protobuf.ByteString;
+import com.google.pubsub.v1.GetTopicRequest;
 import com.google.pubsub.v1.PubsubMessage;
+import com.google.pubsub.v1.Topic;
 import com.google.pubsub.v1.TopicName;
 import com.google.cloud.teleport.v2.coders.FailsafeElementCoder;
 import com.google.cloud.teleport.v2.values.FailsafeElement;
@@ -38,10 +40,18 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.base.Throwables;
 import java.io.IOException;
+import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import com.google.cloud.pubsub.v1.TopicAdminClient;
+import com.google.pubsub.v1.Encoding;
+import org.apache.avro.io.EncoderFactory;
+import org.apache.avro.io.Encoder;
+import com.google.cloud.teleport.v2.ChangelogEntry;
+import java.io.ByteArrayOutputStream;
+
+
 
 /**
  * Class {@link FailsafeModJsonToPubsubMessageTransformer} provides methods that convert a
@@ -161,9 +171,65 @@ public final class FailsafeModJsonToPubsubMessageTransformer {
                           .setStacktrace(Throwables.getStackTraceAsString(e)));
         }
       }
-
+      /* Schema Details:  */
       private PubsubMessage publishModJsonStringToPubsubMessage(String modJsonString)
               throws Exception {
+        String messageFormat = pubSubUtils.getDestination().getMessageFormat();
+        String messageEncoding = pubSubUtils.getDestination().getMessageEncoding();
+        Encoding encoding = null;
+
+        ChangelogEntry changelogEntry = ChangelogEntry.newBuilder().build();
+
+        block:
+        try (TopicAdminClient topicAdminClient = TopicAdminClient.create()) {
+          GetTopicRequest request =
+                  GetTopicRequest.newBuilder()
+                          .setTopic(TopicName.ofProjectTopicName(
+                                  pubSubUtils.getDestination().getPubSubProject(),
+                                  pubSubUtils.getDestination().getPubSubTopic()).toString())
+                          .build();
+          Topic topic = topicAdminClient.getTopic(request);
+          encoding = topic.getSchemaSettings().getEncoding();
+          ByteArrayOutputStream byteStream = new ByteArrayOutputStream();
+          if (topic.getSchemaSettings().getSchema().isEmpty()) {
+            switch(messageFormat){
+              case "AVRO":
+                Encoder encoder = null;
+                switch(messageEncoding) {
+                  case "BINARY":
+                    System.out.println("Preparing a BINARY encoder...");
+                    encoder = EncoderFactory.get().directBinaryEncoder(byteStream, /*reuse=*/ null);
+                    break;
+                  case "JSON":
+                    System.out.println("Preparing a JSON encoder...");
+                    encoder = EncoderFactory.get().jsonEncoder(ChangelogEntry.getClassSchema(), byteStream);
+                    break;
+                  default:
+                    break block;
+                }
+                changelogEntry.customEncode(encoder);
+                encoder.flush();
+
+              case "Protocol Buffer":
+                switch(messageEncoding) {
+                  case "BINARY":
+
+                }
+              case "JSON":
+              default:
+                final String errorMessage =
+                        "Invalid output format:"
+                                + messageFormat
+                                + ". Supported output formats: JSON, AVRO";
+                LOG.info(errorMessage);
+                throw new IllegalArgumentException(errorMessage);
+            }
+          } else {
+
+          }
+        } catch (Exception e) {
+          throw e;
+        }
 
         byte[] encodedRecords = modJsonString.getBytes();
 
