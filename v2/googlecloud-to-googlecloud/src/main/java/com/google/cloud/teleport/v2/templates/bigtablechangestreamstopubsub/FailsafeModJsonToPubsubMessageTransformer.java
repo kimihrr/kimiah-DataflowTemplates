@@ -50,8 +50,7 @@ import org.apache.avro.io.EncoderFactory;
 import org.apache.avro.io.Encoder;
 import com.google.cloud.teleport.v2.ChangelogEntry;
 import java.io.ByteArrayOutputStream;
-
-
+import com.google.cloud.teleport.v2.ChangeLogEntryProto.ChangelogEntryProto;
 
 /**
  * Class {@link FailsafeModJsonToPubsubMessageTransformer} provides methods that convert a
@@ -176,9 +175,8 @@ public final class FailsafeModJsonToPubsubMessageTransformer {
               throws Exception {
         String messageFormat = pubSubUtils.getDestination().getMessageFormat();
         String messageEncoding = pubSubUtils.getDestination().getMessageEncoding();
+        Publisher publisher = null;
         Encoding encoding = null;
-
-        ChangelogEntry changelogEntry = ChangelogEntry.newBuilder().build();
 
         block:
         try (TopicAdminClient topicAdminClient = TopicAdminClient.create()) {
@@ -190,10 +188,11 @@ public final class FailsafeModJsonToPubsubMessageTransformer {
                           .build();
           Topic topic = topicAdminClient.getTopic(request);
           encoding = topic.getSchemaSettings().getEncoding();
-          ByteArrayOutputStream byteStream = new ByteArrayOutputStream();
           if (topic.getSchemaSettings().getSchema().isEmpty()) {
             switch(messageFormat){
               case "AVRO":
+                ChangelogEntry changelogEntry = ChangelogEntry.newBuilder().build();
+                ByteArrayOutputStream byteStream = new ByteArrayOutputStream();
                 Encoder encoder = null;
                 switch(messageEncoding) {
                   case "BINARY":
@@ -210,12 +209,39 @@ public final class FailsafeModJsonToPubsubMessageTransformer {
                 changelogEntry.customEncode(encoder);
                 encoder.flush();
 
+                // Publish the encoded object as a Pub/Sub message.
+                ByteString data = ByteString.copyFrom(byteStream.toByteArray());
+                PubsubMessage message = PubsubMessage.newBuilder().setData(data).build();
+                System.out.println("Publishing message: " + message);
+
+                ApiFuture<String> future = publisher.publish(message);
+                System.out.println("Published message ID: " + future.get());
+
+
               case "Protocol Buffer":
+                ChangelogEntryProto changelogEntryProto = ChangelogEntryProto.newBuilder().build();
+                message = PubsubMessage.newBuilder().setData().build();
                 switch(messageEncoding) {
                   case "BINARY":
+                    message.setData(changelogEntryProto.toByteString());
+                    System.out.println("Publishing a BINARY-formatted message:\n" + message);
+                    break;
+
+                  case "JSON":
 
                 }
               case "JSON":
+                byte[] encodedRecords = modJsonString.getBytes();
+
+                com.google.pubsub.v1.PubsubMessage v1PubsubMessage =
+                        com.google.pubsub.v1.PubsubMessage.newBuilder()
+                                .setData(ByteString.copyFrom(encodedRecords))
+                                .build();
+                ApiFuture<String> messageIdFuture = publisher.publish(v1PubsubMessage);
+                List<ApiFuture<String>> futures = new ArrayList();
+                futures.add(messageIdFuture);
+                ApiFutures.allAsList(futures).get();
+                return v1PubsubMessage;
               default:
                 final String errorMessage =
                         "Invalid output format:"
